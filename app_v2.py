@@ -13,7 +13,7 @@ from PIL import Image
 import pytesseract
 
 # --- 1. 페이지 설정 및 데이터 초기화 ---
-_ = st.set_page_config(page_title="GapFinder v2 (v21.7)", layout="wide")
+_ = st.set_page_config(page_title="GapFinder v2 (v21.8)", layout="wide")
 
 states = ['brand_analysis', 'brand_insight', 'comp_analysis', 'consumer_data', 'consumer_analysis', 'final_report']
 for key in states:
@@ -34,6 +34,7 @@ with st.sidebar:
     naver_secret = st.text_input("Naver Client Secret", type="password")
     
     _ = st.divider()
+    # [수정] 아래 menu 리스트의 이름과 하단 if 조건문의 이름을 완벽히 일치시킴
     menu = st.radio("전략 수립 단계", [
         "1단계. 브랜드 분석 (Thesis)", 
         "1.5단계. 경쟁사 분석 (3 Sets)", 
@@ -68,6 +69,7 @@ def extract_all_content(files=None, url=""):
                     text += "\n".join([s.text for slide in Presentation(f).slides for s in slide.shapes if hasattr(s, "text")])
                 elif f.name.lower().endswith((".png", ".jpg", ".jpeg")):
                     img = Image.open(f)
+                    # [v21.8] Tesseract OCR 활용 한글 추출
                     text += f"\n[이미지 {f.name} OCR 추출 결과]:\n" + pytesseract.image_to_string(img, lang='kor+eng')
             except: pass
     if url:
@@ -75,7 +77,7 @@ def extract_all_content(files=None, url=""):
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
             soup = BeautifulSoup(res.text, 'html.parser')
             for s in soup(['script', 'style']): s.decompose()
-            text += f"\n[랜딩페이지/사이트: {url}]\n{soup.get_text()[:3000]}"
+            text += f"\n[참조 사이트: {url}]\n{soup.get_text()[:3000]}"
         except: pass
     return text
 
@@ -93,7 +95,7 @@ def search_naver_api(query, target="blog"):
 def run_strategy_ai(data, step, insight="", brand_ctx="", consumer_raw=""):
     """'짱'의 시각을 반영한 전략 엔진"""
     if not gemini_key: return "⚠️ Gemini API Key를 입력하세요."
-    if not data or len(data.strip()) < 10: return "⚠️ 분석할 데이터가 부족합니다. 파일이나 URL을 확인해주세요."
+    if not data or len(str(data).strip()) < 10: return "⚠️ 분석할 데이터가 부족합니다."
     try:
         client = genai.Client(api_key=gemini_key)
         p_base = "인사말 생략. 광고 기획 총괄자로서 분석하세요. 매체 출처와 데이터 근거를 명시하세요.\n\n"
@@ -103,11 +105,9 @@ def run_strategy_ai(data, step, insight="", brand_ctx="", consumer_raw=""):
             "consumer": f"{p_base}[Evidence] 네이버/구글/유튜브 통합 데이터 분석. 소비자의 날것의 페인포인트 도출.",
             "final": f"{p_base}[Victory Strategy v6.5]\n1. 브랜드 vs 소비자 언어 Gap 분석 (워딩 대조)\n2. 경쟁사 대비 White Space\n3. 타겟별 필승 광고 카피\n4. 최종 결론: '자괴감을 자부심으로 전환'하는 식의 선언적 전략 한 문장 정의\n인사이트: {insight}\n데이터: {consumer_raw[:5000]}"
         }
-        res = client.models.generate_content(model="gemini-3-flash-preview", contents=prompts[step] + "\n\n데이터:\n" + data[:12000])
+        res = client.models.generate_content(model="gemini-3-flash-preview", contents=prompts[step] + "\n\n데이터:\n" + str(data)[:12000])
         return res.text
-    except Exception as e: 
-        if "503" in str(e): return "⚠️ 구글 서버가 잠시 응답하지 않습니다. 잠시 후 '다시 시도' 버튼을 눌러주세요."
-        return f"분석 중 오류 발생: {e}"
+    except Exception as e: return f"분석 중 오류 발생: {e}"
 
 # --- 4. 무결점 PDF 엔진 ---
 
@@ -127,18 +127,19 @@ class PiecePDF(FPDF):
         self.set_font(self.fn, 'B', 16); self.set_text_color(0, 51, 102)
         self.cell(170, 15, txt=title, ln=True, align='C'); self.ln(5)
         self.set_font(self.fn, '', 10); self.set_text_color(50, 50, 50)
-        clean_text = re.sub(r'[^\u0000-\u007f\uac00-\ud7af]', '', content.replace('|', ' '))
+        # 너비 170mm 고정
+        clean_text = re.sub(r'[^\u0000-\u007f\uac00-\ud7af]', '', str(content).replace('|', ' '))
         self.multi_cell(170, 7, txt=clean_text)
 
 # --- 5. UI 단계별 실행 로직 ---
 
 if menu == "1단계. 브랜드 분석 (Thesis)":
     st.title("🏢 1단계. 브랜드 분석 (문서/이미지/URL)")
-    b_f = st.file_uploader("자사 자료 업로드 (PNG, JPG, PDF 등)", accept_multiple_files=True, key="brand_files")
+    b_f = st.file_uploader("자사 자료 업로드 (PNG, JPG, PDF 등)", accept_multiple_files=True)
     b_u = st.text_input("자사 랜딩페이지 URL")
     st.session_state['brand_insight'] = st.text_area("💡 실제 운영 인사이트", value=st.session_state['brand_insight'])
     if st.button("브랜드 분석 시작"):
-        with st.spinner("이미지 OCR 및 데이터 추출 중..."):
+        with st.spinner("데이터 추출 중..."):
             extracted = extract_all_content(b_f, b_u)
             st.session_state['brand_analysis'] = run_strategy_ai(extracted, "brand", st.session_state['brand_insight'])
             _ = st.rerun()
@@ -146,19 +147,16 @@ if menu == "1단계. 브랜드 분석 (Thesis)":
 
 elif menu == "1.5단계. 경쟁사 분석 (3 Sets)":
     st.title("⚔️ 1.5단계. 경쟁사 정밀 분석 (문서/이미지/URL)")
-    # [복구] 경쟁사 파일 업로더
-    c_f = st.file_uploader("경쟁사 전용 자료 업로드 (PNG, JPG, PDF 등)", accept_multiple_files=True, key="comp_files")
+    c_f = st.file_uploader("경쟁사 전용 자료 업로드 (PNG, JPG, PDF 등)", accept_multiple_files=True)
     col1, col2 = st.columns([1, 2])
     with col1: c1n = st.text_input("경쟁사 1"); c2n = st.text_input("경쟁사 2"); c3n = st.text_input("경쟁사 3")
     with col2: c1u = st.text_input("경쟁사 1 URL"); c2u = st.text_input("경쟁사 2 URL"); c3u = st.text_input("경쟁사 3 URL")
-    
     if st.button("경쟁사 분석 시작"):
-        with st.spinner("이미지 OCR 및 경쟁사 데이터 수집 중..."):
-            # 파일 및 URL에서 텍스트(OCR 포함) 추출
-            all_c_data = extract_all_content(c_f)
+        with st.spinner("경쟁사 데이터 통합 중..."):
+            all_c_data = extract_all_content(c_f) # [v21.8] 경쟁사 파일 OCR 적용
             for n, u in [(c1n, c1u), (c2n, c2u), (c3n, c3u)]:
                 if n:
-                    res = requests.post("https://google.serper.dev/search", headers={'X-API-KEY': serper_key}, json={"q": f"{n} 특징 마케팅 소구점", "gl": "kr", "hl": "ko"}).json()
+                    res = requests.post("https://google.serper.dev/search", headers={'X-API-KEY': serper_key}, json={"q": f"{n} 특징 마케팅", "gl": "kr", "hl": "ko"}).json()
                     all_c_data += f"\n[{n} 검색데이터]\n" + "\n".join([r.get('snippet', '') for r in res.get('organic', [])])
                     if u: all_c_data += extract_all_content(url=u)
             st.session_state['comp_analysis'] = run_strategy_ai(all_c_data, "comp", brand_ctx=st.session_state['brand_analysis'])
@@ -169,31 +167,26 @@ elif menu == "2단계. 소비자 데이터 (OCR/Naver)":
     st.title("👥 2단계. 네이버 & 구글 통합 소비자 데이터")
     kw = st.text_input("분석 키워드 (쉼표 구분)", value="애사비, 애플사이다비니거")
     if st.button("데이터 수집 시작"):
-        with st.spinner("네이버 API 및 구글 데이터 통합 수집 중..."):
+        with st.spinner("멀티 채널 수집 중..."):
             all_r = []
             for k in [x.strip() for x in kw.split(",")]:
                 if k:
-                    # 네이버 공식 API 수집
                     all_r.extend(search_naver_api(k, "blog"))
                     all_r.extend(search_naver_api(k, "cafearticle"))
-                    # 구글/유튜브(Serper) 수집
                     res = requests.post("https://google.serper.dev/search", headers={'X-API-KEY': serper_key}, json={"q": f"{k} 후기 단점", "num": 10, "gl": "kr", "hl": "ko"}).json()
                     for r in res.get('organic', []):
                         tag = get_media_tag(r.get('link', ''))
                         all_r.append(f"{tag} {r.get('title')}: {r.get('snippet')}")
-            
             if all_r:
                 st.session_state['consumer_data'] = all_r
                 st.session_state['consumer_analysis'] = run_strategy_ai("\n".join(all_r), "consumer")
                 _ = st.rerun()
-            else:
-                st.error("검색 결과가 없습니다. 키워드를 확인해주세요.")
     if st.session_state['consumer_analysis']: st.markdown(st.session_state['consumer_analysis'])
 
-elif menu == "3단계. 통합 전략 및 PDF":
+elif menu == "3단계. 통합 전략 리포트": # [수정] 라디오 버튼 텍스트와 완벽 일치
     st.title("🧠 3단계. 최종 Victory Strategy 리포트")
     if st.button("🚀 최종 리포트 생성"):
-        with st.spinner("데이터 통합 및 Gap 도출 중..."):
+        with st.spinner("데이터 합성 중..."):
             comb = f"자사:{st.session_state['brand_analysis']}\n경쟁사:{st.session_state['comp_analysis']}\n소비자:{st.session_state['consumer_analysis']}"
             st.session_state['final_report'] = run_strategy_ai(comb, "final", st.session_state['brand_insight'], consumer_raw=str(st.session_state['consumer_data']))
             _ = st.rerun()
@@ -205,5 +198,5 @@ elif menu == "3단계. 통합 전략 및 PDF":
         _ = pdf.write_smart("BRAND ANALYSIS", st.session_state['brand_analysis'])
         _ = pdf.write_smart("COMPETITOR ANALYSIS", st.session_state['comp_analysis'])
         _ = pdf.write_smart("CONSUMER RAW VOICE", st.session_state['consumer_analysis'])
-        _ = pdf.write_smart("VICTORY STRATEGY master", st.session_state['final_report'])
+        _ = pdf.write_smart("VICTORY STRATEGY v6.5", st.session_state['final_report'])
         _ = st.download_button("📥 통합 리포트 PDF 다운로드", data=bytes(pdf.output()), file_name="GapFinder_v2_Final.pdf", mime="application/pdf")
