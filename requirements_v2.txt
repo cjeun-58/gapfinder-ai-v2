@@ -1,0 +1,11 @@
+streamlit
+google-genai
+PyPDF2
+python-pptx
+pandas
+openpyxl
+requests
+beautifulsoup4
+fpdf2
+pytesseract
+Pillow
