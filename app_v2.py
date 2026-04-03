@@ -14,8 +14,9 @@ from PIL import Image
 import pytesseract
 
 # --- 1. 페이지 설정 및 데이터 초기화 ---
-_ = st.set_page_config(page_title="GapFinder v2 (v24.7)", layout="wide")
+_ = st.set_page_config(page_title="GapFinder v2 (v24.8)", layout="wide")
 
+# 세션 상태 키 리스트
 states = ['brand_analysis', 'brand_insight', 'comp_analysis', 'consumer_data', 'consumer_analysis', 'final_report']
 for key in states:
     if key not in st.session_state:
@@ -31,11 +32,19 @@ with st.sidebar:
     serper_key = st.text_input("2. Serper API Key", type="password")
     
     st.divider()
+    # [수정] 분석 현황판을 메뉴 위로 끌어올려 상단 고정
+    st.subheader("📊 실시간 분석 현황")
+    st.write(f"🏢 자사 분석: {'✅' if st.session_state['brand_analysis'] else '❌'}")
+    st.write(f"⚔️ 경쟁 분석: {'✅' if st.session_state['comp_analysis'] else '❌'}")
+    st.write(f"👥 소비자 분석: {'✅' if st.session_state['consumer_analysis'] else '❌'}")
+    st.write(f"🧠 최종 리포트: {'✅' if st.session_state['final_report'] else '❌'}")
+    
+    st.divider()
     st.subheader("🇳 네이버 검색 API (선택)")
     nav_id = st.text_input("Naver Client ID")
     nav_pw = st.text_input("Naver Client Secret", type="password")
     
-    _ = st.divider()
+    st.divider()
     menu = st.radio("분석 프로세스 단계", [
         "1단계. 브랜드 분석 (Thesis)", 
         "2단계. 경쟁사 분석 (Competitor)", 
@@ -70,7 +79,7 @@ def extract_all_content(files=None, url=""):
     return text
 
 def run_ai(data, step, insight="", brand_ctx="", consumer_raw=""):
-    """지능형 백오프 재시도 로직이 적용된 전략 엔진 """
+    """서버 안정성(Backoff) 로직이 포함된 전략 엔진 """
     if not gemini_key: return "⚠️ API Key가 필요합니다."
     
     client = genai.Client(api_key=gemini_key)
@@ -78,26 +87,26 @@ def run_ai(data, step, insight="", brand_ctx="", consumer_raw=""):
     모든 분석은 [기능 / 가격 / 서비스 / 디자인] 4대 카테고리를 준수하세요.\n\n"""
     
     prompts = {
-        "brand": f"{p_base}[Thesis] 자사 브랜드 분석: VOI(가치) 및 PDI(리스크)를 10점 만점 지표로 산출하세요. 인사이트: {insight}",
-        "comp": f"{p_base}[Competitor] 경쟁 우위 분석: 경쟁사의 전략적 사각지대를 자사({brand_ctx[:300]}) 관점에서 분석하세요.",
+        "brand": f"{p_base}[Thesis] 자사 브랜드 분석: VOI(가치) 및 PDI(리스크)를 10점 만점으로 산출하세요. 인사이트: {insight}",
+        "comp": f"{p_base}[Competitor] 경쟁 우위 분석: 경쟁사들의 전략적 사각지대를 자사({brand_ctx[:300]}) 관점에서 도출하세요.",
         "consumer": f"{p_base}[Evidence] 소비자 여론 분석: 대량 보이스를 카테고리별로 정량 분류하여 Gap을 도출하세요.",
-        "final": f"{p_base}[Synthesis] Victory Strategy: Language Gap Matrix, Strategic Foundations, Target-Action Table을 포함한 한 문장 필승 전략 정의. 인사이트: {insight}\n데이터: {consumer_raw[:8000]}"
+        "final": f"{p_base}[Synthesis] Victory Strategy: Language Gap Matrix, Strategic Foundations, Target-Action Table을 포함한 한 문장 전략 정의. 인사이트: {insight}\n데이터: {consumer_raw[:8000]}"
     }
 
-    # [핵심 업데이트] 지능형 재시도 루프
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            # 텍스트가 너무 길면 거절당하므로 슬라이싱 조절 [cite: 414-417]
             res = client.models.generate_content(model="gemini-3-flash-preview", contents=prompts[step] + "\n\n데이터:\n" + str(data)[:25000])
             return res.text
         except Exception as e:
             err_msg = str(e).lower()
             if ("503" in err_msg or "high demand" in err_msg) and attempt < max_retries - 1:
-                wait_time = (attempt + 1) * 7 # 7초, 14초 순차적으로 대기 시간 증가 
-                st.warning(f"🔄 구글 서버가 혼잡합니다. {wait_time}초 후 재시도합니다... (시도 {attempt + 1}/{max_retries})")
+                wait_time = (attempt + 1) * 7
+                st.warning(f"🔄 서버 혼잡 감지. {wait_time}초 후 다시 분석을 시도합니다... (시도 {attempt+1}/3)")
                 time.sleep(wait_time)
                 continue
-            return f"⚠️ 서버 과부하로 분석이 중단되었습니다. 잠시 후(약 1~2분 뒤) '다시 시도' 버튼을 눌러주세요. ({e})"
+            return f"⚠️ 서버 과부하로 분석이 중단되었습니다. 잠시 후 '다시 시도' 버튼을 눌러주세요. ({e})"
 
 # --- 4. PDF 및 UI 로직 ---
 class SafePDF(FPDF):
@@ -120,18 +129,18 @@ class SafePDF(FPDF):
 
 if menu == "1단계. 브랜드 분석 (Thesis)":
     st.title("🏢 1단계. 브랜드 가치 및 리스크 분석")
-    b_f = st.file_uploader("자사 자료 (PDF/PPTX/이미지)", accept_multiple_files=True)
+    b_f = st.file_uploader("자사 자료 업로드", accept_multiple_files=True)
     b_u = st.text_input("자사 웹사이트 URL")
     st.session_state['brand_insight'] = st.text_area("💡 실무/운영 인사이트", value=st.session_state['brand_insight'] if st.session_state['brand_insight'] != "" else "")
     if st.button("브랜드 분석 시작"):
-        with st.spinner("서버 상태 확인 및 데이터 추출 중..."):
+        with st.spinner("전문가 시각으로 데이터 분석 중..."):
             st.session_state['brand_analysis'] = run_ai(extract_all_content(b_f, b_u), "brand", st.session_state['brand_insight'])
             _ = st.rerun()
     if st.session_state['brand_analysis']: st.markdown(st.session_state['brand_analysis'])
 
 elif menu == "2단계. 경쟁사 분석 (Competitor)":
     st.title("⚔️ 2단계. 경쟁 구도 분석 (최대 3개)")
-    c_f = st.file_uploader("경쟁사 자료", accept_multiple_files=True)
+    c_f = st.file_uploader("경쟁사 전용 자료", accept_multiple_files=True)
     col1, col2, col3 = st.columns(3)
     with col1: c1n = st.text_input("경쟁사 1"); c1u = st.text_input("URL 1")
     with col2: c2n = st.text_input("경쟁사 2"); c2u = st.text_input("URL 2")
@@ -144,7 +153,6 @@ elif menu == "2단계. 경쟁사 분석 (Competitor)":
                     res = requests.post("https://google.serper.dev/search", headers={'X-API-KEY': serper_key}, json={"q": f"{n} 실사용 불만 후기", "num": 30, "gl": "kr", "hl": "ko"}).json()
                     all_c += f"\n[{n} 데이터]\n" + "\n".join([r.get('snippet', '') for r in res.get('organic', [])])
                     if u: all_c += extract_all_content(url=u)
-            # 자사 분석 컨텍스트를 넘겨서 비교 분석 수행
             st.session_state['comp_analysis'] = run_ai(all_c, "comp", brand_ctx=st.session_state['brand_analysis'])
             _ = st.rerun()
     if st.session_state['comp_analysis']: st.markdown(st.session_state['comp_analysis'])
@@ -155,7 +163,7 @@ elif menu == "3단계. 소비자 분석 (Evidence)":
     if st.button("데이터 수집 및 분석 시작"):
         if not kw: st.warning("키워드를 입력해주세요.")
         else:
-            with st.spinner("대량 데이터 수집 중..."):
+            with st.spinner("대량 데이터 수집 및 분류 중..."):
                 all_r = []
                 for k in [x.strip() for x in kw.split(",")]:
                     res = requests.post("https://google.serper.dev/search", headers={'X-API-KEY': serper_key}, json={"q": f"{k}", "num": 50, "gl": "kr", "hl": "ko"}).json()
@@ -179,7 +187,7 @@ elif menu == "3단계. 소비자 분석 (Evidence)":
 elif menu == "4단계. 통합 전략 리포트 (Synthesis)":
     st.title("🧠 4단계. 최종 Victory Strategy")
     if st.button("🚀 최종 리포트 생성"):
-        with st.spinner("전략 합성 중..."):
+        with st.spinner("모든 Gap 분석 통합 중..."):
             comb = f"자사:{st.session_state['brand_analysis']}\n경쟁:{st.session_state['comp_analysis']}\n소비자:{st.session_state['consumer_analysis']}"
             st.session_state['final_report'] = run_ai(comb, "final", st.session_state['brand_insight'], consumer_raw=str(st.session_state['consumer_data']))
             _ = st.rerun()
@@ -190,5 +198,5 @@ elif menu == "4단계. 통합 전략 리포트 (Synthesis)":
         pdf.write_section("1. STRATEGIC THESIS", st.session_state['brand_analysis'])
         pdf.write_section("2. COMPETITIVE GAP", st.session_state['comp_analysis'])
         pdf.write_section("3. CONSUMER INSIGHT", st.session_state['consumer_analysis'])
-        pdf.write_section("4. VICTORY STRATEGY v24.7", st.session_state['final_report'])
+        pdf.write_section("4. VICTORY STRATEGY v24.8", st.session_state['final_report'])
         st.download_button("📥 통합 리포트 PDF 다운로드", data=bytes(pdf.output()), file_name="GapFinder_v24_Final.pdf", mime="application/pdf")
